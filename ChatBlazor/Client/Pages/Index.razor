@@ -1,0 +1,208 @@
+﻿@page "/"
+
+<!-- This add signal Yadra from Microsoft  -->
+@inject NavigationManager NavigationManager
+
+@implements IAsyncDisposable//import in razor
+
+
+
+
+<PageTitle>BlazorChat</PageTitle>
+<h1>Blazor SignalR Chat:</h1>
+
+@if (!IsConnected)
+{
+	<h3>Enter your username:</h3>
+
+	<input type="text" maxlength="32" @bind="username" class="form-control" id="entername" /> <!-- bind="username" - relation our input with user name  -->
+	<button type="button" class="btn btn-primary" @onclick="StartChatting">Start Chatting</button>
+
+	@if (message != null)
+	{
+		<small class="form-text text-muted">@message</small>
+	}
+}
+else
+{
+	<div>
+		<p>You are connected as <b>@username</b></p>
+		<button class="btn btn-primary btn-sm" @onclick="Disconnect">Quit Chatting</button>
+	</div>
+
+	<hr />
+
+	<div id="scrollbox">
+		@foreach (var item in messages)
+		{
+			@if (item.Notification)
+			{
+				<div class="newuser">@item.Body</div>
+			}
+			else
+			{
+				<div class="@item.Status">
+					<div class="username">
+						@item.Username
+					</div>
+					<div id="date">
+						@item.Time
+					</div>
+					<div>
+						@item.Body
+					</div>
+				</div>
+			}
+		}
+		<hr />
+		<div class="input-group">
+			<input @bind-value="message" @bind-value:event="oninput" @onkeyup="HandleInput">
+			<button class="btn btn-primary" @onclick="Send" disabled="@(!IsConnected)">Send</button>
+		</div>
+	</div>
+}
+
+
+
+
+
+<!-- Model and Controler  -->
+@code {
+	private HubConnection? hubConnection; //we call the Connection
+	private string username = string.Empty; //add our messages. This empty at the moment
+	private string message = string.Empty;
+
+
+
+
+	private class Message
+	{
+		public Message(string username, string body, bool ismine)
+		{
+			Username = username;
+			Body = body;
+			//Mine = mine
+			Time = DateTime.Now;
+
+
+
+
+			//Status action:
+			if (ismine)
+			{
+				Status = "sent";
+			}
+			else //if(!isMine)
+			{
+				Status = "received";
+			}
+
+
+			//Notification
+			if (body.StartsWith("Notification!"))
+			{
+				Notification = true;
+			}
+			else
+			{
+				Notification = false;
+			}
+		}
+
+		public string Username { get; set; }
+		public string Body { get; set; }
+		//public bool Mine { get; set; }
+		public DateTime Time { get; set; }
+		public string Status { get; set; }
+		public bool Notification { get; set; }
+		
+	}
+
+
+
+
+	// list of messages in chat
+	private List<Message> messages = new List<Message>();
+
+
+
+	private async Task StartChatting()
+	{
+
+		//Validation will work, if you don't enter your name
+		if (string.IsNullOrWhiteSpace(username))
+		{
+			message = "Please enter a name";
+			return;
+		};
+		//Remove old messages if any
+		messages.Clear();
+
+
+
+		hubConnection = new HubConnectionBuilder()
+			.WithUrl(NavigationManager.ToAbsoluteUri("/chathub")) //This enter chat our the end-point, directed in programm.cs
+			.Build();// we get hub conection
+
+
+
+		//catch message and message display
+		hubConnection.On<string, string>("ReceiveMessage", (user, message) =>
+		{
+			bool isMine = user.Equals(username, StringComparison.OrdinalIgnoreCase);
+
+			messages.Add(new Message(user, message, isMine));
+
+			StateHasChanged();
+		});
+
+		await hubConnection.StartAsync();
+
+		await Send($"Notification! User: {username}, has joined the chat.");
+	
+	}
+
+	private async Task Send(string message)
+	{	
+		if (IsConnected && !string.IsNullOrWhiteSpace(message))
+		{
+			await hubConnection.SendAsync("SendMessage", username, message);
+			message = string.Empty;
+		}
+	}
+
+	private async Task Send()
+	{
+		if (hubConnection != null)
+		{
+			await hubConnection.SendAsync("SendMessage", username, message);
+			message = string.Empty;
+		}
+	}
+
+	public bool IsConnected => hubConnection?.State == HubConnectionState.Connected;
+
+	private async Task Disconnect()
+	{
+		await Send($"Notification: {username}, has left the chat!");
+		await DisposeAsync();
+	}
+
+
+	//Delete
+	public async ValueTask DisposeAsync()
+	{
+		if (hubConnection != null)
+		{
+			await hubConnection.DisposeAsync();
+		}
+	}
+
+	private async Task HandleInput(KeyboardEventArgs args)
+	{
+		if (args.Key.Equals("Enter")) // Key = Enter
+		{
+			await Send(); 
+		}
+	}
+	}
